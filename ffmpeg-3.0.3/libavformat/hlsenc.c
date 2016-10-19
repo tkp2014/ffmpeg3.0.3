@@ -42,6 +42,10 @@
 #define KEYSIZE 16
 #define LINE_BUFFER_SIZE 1024
 
+/*for http upload*/
+#define HTTPOPEN 'O'
+#define HTTPCLOSE 'S'
+
 typedef struct HLSSegment {
     char filename[1024];
     char sub_filename[1024];
@@ -117,6 +121,55 @@ typedef struct HLSContext {
     char *method;
 
 } HLSContext;
+
+/*For http upload*/
+static const char* av_ishttp(char *filename)
+{
+    char *p = strchr(filename, ':');
+    if (!p)
+       return filename;
+    *p = '\0';
+
+    return filename;
+}
+
+static const char* av_subfilename(const char *filename)
+{
+    const char *p = strrchr(filename, '.');
+    if (!p)
+       return filename;
+       
+    return p+1;
+}
+
+static void av_http_upload_status(AVFormatContext *s, const char *filename, char http_status)
+{
+    char oc_filename[1024];
+    strcpy(oc_filename, filename);
+    const char *ptr;
+    ptr = av_subfilename(oc_filename);
+    /* ts or m3u8 */
+    if (0 == strcmp(ptr,"ts")) {
+        if (HTTPOPEN==http_status)
+            av_log(NULL, AV_LOG_INFO, "Error opening ts!\n");
+        else if (HTTPCLOSE==http_status)
+            av_log(NULL, AV_LOG_INFO, "ts close successed!\n");
+    } else if (0 == strcmp(ptr,"m3u8")) {
+        if (HTTPOPEN==http_status)
+             av_log(NULL, AV_LOG_INFO, "Error opening m3u8!\n");
+        else if (HTTPCLOSE==http_status)
+             av_log(NULL, AV_LOG_INFO, "m3u8 close successed!\n");
+    }
+    /* whether http protocol is used */
+    const char *proto = avio_find_protocol_name(s->filename);
+    int use_http = proto && !strcmp(proto, "http");
+    if (use_http) {
+        if (HTTPOPEN==http_status)
+             av_log(NULL, AV_LOG_INFO, "Error opening http!\n");
+        else if (HTTPCLOSE==http_status)
+             av_log(NULL, AV_LOG_INFO, "http close successed!\n");
+    }
+}
 
 static int hls_delete_old_segments(HLSContext *hls) {
 
@@ -386,6 +439,7 @@ static int hls_window(AVFormatContext *s, int last)
     int version = hls->flags & HLS_SINGLE_FILE ? 4 : 3;
     const char *proto = avio_find_protocol_name(s->filename);
     int use_rename = proto && !strcmp(proto, "file");
+//    int use_http = proto && !strcmp(proto, "http");
     static unsigned warned_non_file;
     char *key_uri = NULL;
     char *iv_string = NULL;
@@ -396,8 +450,10 @@ static int hls_window(AVFormatContext *s, int last)
 
     set_http_options(&options, hls);
     snprintf(temp_filename, sizeof(temp_filename), use_rename ? "%s.tmp" : "%s", s->filename);
-    if ((ret = s->io_open(s, &out, temp_filename, AVIO_FLAG_WRITE, &options)) < 0)
+    if ((ret = s->io_open(s, &out, temp_filename, AVIO_FLAG_WRITE, &options)) < 0) {
+        av_http_upload_status(s, temp_filename, 'O');
         goto fail;
+    }
 
     for (en = hls->segments; en; en = en->next) {
         if (target_duration < en->duration)
@@ -478,6 +534,7 @@ fail:
     av_dict_free(&options);
     ff_format_io_close(s, &out);
     ff_format_io_close(s, &sub_out);
+    av_http_upload_status(s, temp_filename, 'S');
     if (ret >= 0 && use_rename)
         ff_rename(temp_filename, s->filename, s);
     return ret;
@@ -543,13 +600,17 @@ static int hls_start(AVFormatContext *s)
             goto fail;
         }
         err = s->io_open(s, &oc->pb, filename, AVIO_FLAG_WRITE, &options);
+        if (err < 0)
+            av_http_upload_status(s, oc->filename, 'O');
         av_free(filename);
         av_dict_free(&options);
         if (err < 0)
             return err;
     } else
-        if ((err = s->io_open(s, &oc->pb, oc->filename, AVIO_FLAG_WRITE, &options)) < 0)
+        if ((err = s->io_open(s, &oc->pb, oc->filename, AVIO_FLAG_WRITE, &options)) < 0) {
+            av_http_upload_status(s, oc->filename, 'O');
             goto fail;
+        }
     if (c->vtt_basename) {
         set_http_options(&options, c);
         if ((err = s->io_open(s, &vtt_oc->pb, vtt_oc->filename, AVIO_FLAG_WRITE, &options)) < 0)
@@ -792,6 +853,8 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
             hls->number++;
         } else {
             ff_format_io_close(s, &oc->pb);
+            av_http_upload_status(s, oc->filename, 'S');
+            
             if (hls->vtt_avf)
                 ff_format_io_close(s, &hls->vtt_avf->pb);
 
