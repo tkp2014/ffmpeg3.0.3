@@ -123,6 +123,7 @@ typedef struct HLSContext {
 } HLSContext;
 
 /*For http upload*/
+/*
 static const char* av_ishttp(char *filename)
 {
     char *p = strchr(filename, ':');
@@ -131,7 +132,7 @@ static const char* av_ishttp(char *filename)
     *p = '\0';
 
     return filename;
-}
+}*/
 
 static const char* av_subfilename(const char *filename)
 {
@@ -145,29 +146,36 @@ static const char* av_subfilename(const char *filename)
 static void av_http_upload_status(AVFormatContext *s, const char *filename, char http_status)
 {
     char oc_filename[1024];
-    strcpy(oc_filename, filename);
     const char *ptr;
-    ptr = av_subfilename(oc_filename);
-    /* ts or m3u8 */
-    if (0 == strcmp(ptr,"ts")) {
-        if (HTTPOPEN==http_status)
-            av_log(NULL, AV_LOG_INFO, "Error opening ts!\n");
-        else if (HTTPCLOSE==http_status)
-            av_log(NULL, AV_LOG_INFO, "ts close successed!\n");
-    } else if (0 == strcmp(ptr,"m3u8")) {
-        if (HTTPOPEN==http_status)
-             av_log(NULL, AV_LOG_INFO, "Error opening m3u8!\n");
-        else if (HTTPCLOSE==http_status)
-             av_log(NULL, AV_LOG_INFO, "m3u8 close successed!\n");
-    }
     /* whether http protocol is used */
     const char *proto = avio_find_protocol_name(s->filename);
     int use_http = proto && !strcmp(proto, "http");
-    if (use_http) {
+    if (!use_http)
+        return;
+
+    strcpy(oc_filename, filename);
+    ptr = av_subfilename(oc_filename);
+
+    /* ts or m3u8 */
+    if (0 == strcmp(ptr,"ts")) {
         if (HTTPOPEN==http_status)
-             av_log(NULL, AV_LOG_INFO, "Error opening http!\n");
+            av_log(NULL, AV_LOG_INFO, "HTTP PUT opening ts failed: [%s], Error\n", filename);
         else if (HTTPCLOSE==http_status)
-             av_log(NULL, AV_LOG_INFO, "http close successed!\n");
+            av_log(NULL, AV_LOG_INFO, "HTTP PUT closing ts succeed: [%s]\n", filename);
+    } else if (0 == strcmp(ptr,"m3u8")) {
+        if (HTTPOPEN==http_status)
+             av_log(NULL, AV_LOG_INFO, "HTTP PUT opening m3u8 failed: [%s], Error\n", filename);
+        else if (HTTPCLOSE==http_status)
+             av_log(NULL, AV_LOG_INFO, "HTTP PUT closing m3u8 succeed: [%s]\n", filename);
+    }
+
+    if (HTTPOPEN==http_status) {
+        av_log(NULL, AV_LOG_INFO, "HTTP PUT opening http failed: [%s], Error\n", filename);
+    } else if (HTTPCLOSE==http_status) {
+        if (0 == strcmp(ptr, "ts"))
+            av_log(NULL, AV_LOG_INFO, "HTTP PUT closing http for ts succeed: [%s]\n", filename);
+        else if (0 == strcmp(ptr, "m3u8"))
+            av_log(NULL, AV_LOG_INFO, "HTTP PUT closing http for m3u8 succeed: [%s]\n", filename);
     }
 }
 
